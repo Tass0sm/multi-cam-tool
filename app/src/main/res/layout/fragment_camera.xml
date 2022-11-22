@@ -19,10 +19,25 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.tassosm.multicamtool.AutoFitSurfaceView
-        android:id="@+id/view_finder"
+    <LinearLayout
+        android:layout_height="wrap_content"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:weightSum="2">
+
+        <com.tassosm.multicamtool.AutoFitSurfaceView
+            android:id="@+id/view_finder1"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <com.tassosm.multicamtool.AutoFitSurfaceView
+            android:id="@+id/view_finder2"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
 
     <View
         android:id="@+id/overlay"

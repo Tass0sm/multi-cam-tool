@@ -164,7 +164,7 @@ class CameraFragment : Fragment() {
             insets.consumeSystemWindowInsets()
         }
 
-        fragmentCameraBinding.viewFinder.holder.addCallback(object : SurfaceHolder.Callback {
+        fragmentCameraBinding.viewFinder1.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
 
             override fun surfaceChanged(
@@ -176,13 +176,13 @@ class CameraFragment : Fragment() {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 // Selects appropriate preview size and configures view finder
                 val previewSize = getPreviewOutputSize(
-                    fragmentCameraBinding.viewFinder.display,
+                    fragmentCameraBinding.viewFinder1.display,
                     characteristics,
                     SurfaceHolder::class.java
                 )
-                Log.d(TAG, "View finder size: ${fragmentCameraBinding.viewFinder.width} x ${fragmentCameraBinding.viewFinder.height}")
+                Log.d(TAG, "View finder size: ${fragmentCameraBinding.viewFinder1.width} x ${fragmentCameraBinding.viewFinder1.height}")
                 Log.d(TAG, "Selected preview size: $previewSize")
-                fragmentCameraBinding.viewFinder.setAspectRatio(
+                fragmentCameraBinding.viewFinder1.setAspectRatio(
                     previewSize.width,
                     previewSize.height
                 )
@@ -220,14 +220,16 @@ class CameraFragment : Fragment() {
 
         // Creates list of Surfaces where the camera will output frames
         val targets: DualCameraTargets = Triple(mutableListOf(),
-            mutableListOf(fragmentCameraBinding.viewFinder.holder.surface, imageReader.surface),
+            mutableListOf(fragmentCameraBinding.viewFinder1.holder.surface, imageReader.surface),
             mutableListOf())
 
         // Start a capture session using our open camera and list of Surfaces where frames will go
         session = createDualCamCaptureSession(camera, args.dualCam, targets, cameraExecutor)
 
         val captureRequest = camera.createCaptureRequest(
-                CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(fragmentCameraBinding.viewFinder.holder.surface) }
+                CameraDevice.TEMPLATE_PREVIEW).apply {
+            addTarget(fragmentCameraBinding.viewFinder1.holder.surface)
+                }
 
         // This will keep sending the capture request as frequently as possible until the
         // session is torn down or session.stopRepeating() is called
@@ -377,7 +379,7 @@ class CameraFragment : Fragment() {
                     timestamp: Long,
                     frameNumber: Long) {
                 super.onCaptureStarted(session, request, timestamp, frameNumber)
-                fragmentCameraBinding.viewFinder.post(animationTask)
+                fragmentCameraBinding.viewFinder1.post(animationTask)
             }
 
             override fun onCaptureCompleted(
