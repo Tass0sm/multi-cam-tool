@@ -1,67 +1,57 @@
 package com.tassosm.multicamtool
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
+import android.os.AsyncTask
 import android.os.Bundle
+import android.util.Log
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import com.tassosm.multicamtool.databinding.ActivityMainBinding
+import java.util.concurrent.Executor
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
-    /**
-     * Helper class used to encapsulate a logical camera and two underlying
-     * physical cameras
-     */
-    data class DualCamera(val logicalId: String, val physicalId1: String, val physicalId2: String)
-
-    // From google.
-    private fun findDualCameras(manager: CameraManager, facing: Int? = null): List<DualCamera> {
-        val dualCameras = ArrayList<DualCamera>()
-
-        // Iterate over all the available camera characteristics
-        manager.cameraIdList.map {
-            Pair(manager.getCameraCharacteristics(it), it)
-        }.filter {
-            // Filter by cameras facing the requested direction
-            facing == null || it.first.get(CameraCharacteristics.LENS_FACING) == facing
-        }.filter {
-            // Filter by logical cameras
-            // CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA requires API >= 28
-            it.first.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)!!.contains(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
-        }.forEach {
-            // All possible pairs from the list of physical cameras are valid results
-            // NOTE: There could be N physical cameras as part of a logical camera grouping
-            // getPhysicalCameraIds() requires API >= 28
-            val physicalCameras = it.first.physicalCameraIds.toTypedArray()
-            for (idx1 in physicalCameras.indices) {
-                for (idx2 in (idx1 + 1) until physicalCameras.size) {
-                    dualCameras.add(DualCamera(
-                        it.second, physicalCameras[idx1], physicalCameras[idx2]))
-                }
-            }
-        }
-
-        return dualCameras
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+    }
 
-        val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
-        val dualCams = findDualCameras(cameraManager)
+    override fun onResume() {
+        super.onResume()
+        // Before setting full screen flags, we must wait a bit to let UI settle; otherwise, we may
+        // be trying to set app to immersive mode before it's ready and the flags do not stick
+        binding.fragmentContainer.postDelayed({
+            binding.fragmentContainer.systemUiVisibility = FLAGS_FULLSCREEN
+        }, IMMERSIVE_FLAG_TIMEOUT)
+    }
 
-        // create an array adapter and pass the required parameter
-        // in our case pass the context, drop down layout , and array.
-        val arrayAdapter = ArrayAdapter(this, R.layout.dropdown_item, dualCams)
-        // get reference to the autocomplete text view
-        // set adapter to the autocomplete tv to the arrayAdapter
-        binding.autoCompleteTextView.setAdapter(arrayAdapter)
+    companion object {
+        /** Combination of all flags required to put activity into immersive mode */
+        const val FLAGS_FULLSCREEN =
+            View.SYSTEM_UI_FLAG_LOW_PROFILE or
+                    View.SYSTEM_UI_FLAG_FULLSCREEN or
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+
+        /** Milliseconds used for UI animations */
+        const val ANIMATION_FAST_MILLIS = 50L
+        const val ANIMATION_SLOW_MILLIS = 100L
+        private const val IMMERSIVE_FLAG_TIMEOUT = 500L
     }
 }
