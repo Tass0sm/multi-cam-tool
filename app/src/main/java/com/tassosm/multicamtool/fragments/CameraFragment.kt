@@ -28,6 +28,8 @@ import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.media.ExifInterface
 import android.media.Image
 import android.media.ImageReader
@@ -62,10 +64,21 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.TimeoutException
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executor
 import kotlin.RuntimeException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
+
+/**
+ * Helper type definition that encapsulates 3 sets of output targets:
+ *
+ *   1. Logical camera
+ *   2. First physical camera
+ *   3. Second physical camera
+ */
+typealias DualCameraTargets =
+        Triple<MutableList<Surface>?, MutableList<Surface>?, MutableList<Surface>?>
 
 class CameraFragment : Fragment() {
 
@@ -101,6 +114,9 @@ class CameraFragment : Fragment() {
 
     /** [Handler] corresponding to [cameraThread] */
     private val cameraHandler = Handler(cameraThread.looper)
+
+    /** [Executor] corresponding to [cameraThread] */
+    private val cameraExecutor = HandlerExecutor(cameraHandler)
 
     /** Performs recording animation of flashing screen */
     private val animationTask: Runnable by lazy {
@@ -193,7 +209,7 @@ class CameraFragment : Fragment() {
      */
     private fun initializeCamera() = lifecycleScope.launch(Dispatchers.Main) {
         // Open the selected camera
-        camera = openCamera(cameraManager, args.dualCam.logicalId, cameraHandler)
+        camera = openDualCamera(cameraManager, args.dualCam, cameraHandler)
 
         // Initialize an image reader which will be used to capture still photos
         val size = characteristics.get(
@@ -203,10 +219,12 @@ class CameraFragment : Fragment() {
                 size.width, size.height, args.pixelFormat, IMAGE_BUFFER_SIZE)
 
         // Creates list of Surfaces where the camera will output frames
-        val targets = listOf(fragmentCameraBinding.viewFinder.holder.surface, imageReader.surface)
+        val targets: DualCameraTargets = Triple(mutableListOf(),
+            mutableListOf(fragmentCameraBinding.viewFinder.holder.surface, imageReader.surface),
+            mutableListOf())
 
         // Start a capture session using our open camera and list of Surfaces where frames will go
-        session = createCaptureSession(camera, targets, cameraHandler)
+        session = createDualCamCaptureSession(camera, args.dualCam, targets, cameraExecutor)
 
         val captureRequest = camera.createCaptureRequest(
                 CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(fragmentCameraBinding.viewFinder.holder.surface) }
@@ -257,11 +275,12 @@ class CameraFragment : Fragment() {
 
     /** Opens the camera and returns the opened device (as the result of the suspend coroutine) */
     @SuppressLint("MissingPermission")
-    private suspend fun openCamera(
+    private suspend fun openDualCamera(
             manager: CameraManager,
-            cameraId: String,
+            dualCamera: DualCamera,
             handler: Handler? = null
     ): CameraDevice = suspendCancellableCoroutine { cont ->
+        val cameraId = dualCamera.logicalId
         manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
             override fun onOpened(device: CameraDevice) = cont.resume(device)
 
@@ -290,24 +309,41 @@ class CameraFragment : Fragment() {
      * Starts a [CameraCaptureSession] and returns the configured session (as the result of the
      * suspend coroutine
      */
-    private suspend fun createCaptureSession(
+    private suspend fun createDualCamCaptureSession(
             device: CameraDevice,
-            targets: List<Surface>,
-            handler: Handler? = null
+            dualCamera: DualCamera,
+            targets: DualCameraTargets,
+            executor: Executor
     ): CameraCaptureSession = suspendCoroutine { cont ->
+
+        // Create 3 sets of output configurations: one for the logical camera, and
+        // one for each of the physical cameras.
+        val outputConfigsLogical = targets.first?.map { OutputConfiguration(it) }
+        val outputConfigsPhysical1 = targets.second?.map {
+            OutputConfiguration(it).apply { setPhysicalCameraId(dualCamera.physicalId1) } }
+        val outputConfigsPhysical2 = targets.third?.map {
+            OutputConfiguration(it).apply { setPhysicalCameraId(dualCamera.physicalId2) } }
+
+        // Put all the output configurations into a single flat array
+        val outputConfigsAll = arrayOf(
+            outputConfigsLogical, outputConfigsPhysical1, outputConfigsPhysical2)
+            .filterNotNull().flatten()
+
+        // Instantiate a session configuration that can be used to create a session
+        val sessionConfiguration = SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
+            outputConfigsAll, executor, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
+
+                override fun onConfigureFailed(session: CameraCaptureSession) {
+                    val exc = RuntimeException("Camera ${device.id} session configuration failed")
+                    Log.e(TAG, exc.message, exc)
+                    cont.resumeWithException(exc)
+                }
+            })
 
         // Create a capture session using the predefined targets; this also involves defining the
         // session state callback to be notified of when the session is ready
-        device.createCaptureSession(targets, object : CameraCaptureSession.StateCallback() {
-
-            override fun onConfigured(session: CameraCaptureSession) = cont.resume(session)
-
-            override fun onConfigureFailed(session: CameraCaptureSession) {
-                val exc = RuntimeException("Camera ${device.id} session configuration failed")
-                Log.e(TAG, exc.message, exc)
-                cont.resumeWithException(exc)
-            }
-        }, handler)
+        device.createCaptureSession(sessionConfiguration)
     }
 
     /**
