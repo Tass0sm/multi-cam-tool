@@ -2,4 +2,5 @@
     <string name="app_name">Multi-Camera Tool</string>
     <string name="Start_Button_Text">Start Recording</string>
     <string name="Stop_Button_Text">Stop Recording</string>
+    <string name="capture">Capture</string>
 </resources>
