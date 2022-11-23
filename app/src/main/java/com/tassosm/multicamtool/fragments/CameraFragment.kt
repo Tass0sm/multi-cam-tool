@@ -287,14 +287,14 @@ class CameraFragment : Fragment() {
                         Log.d(TAG, "EXIF metadata saved: ${output.absolutePath}")
                     }
 
-                    // Display the photo taken to user
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        navController.navigate(CameraFragmentDirections
-                                .actionCameraToJpegViewer(output.absolutePath)
-                                .setOrientation(result.orientation)
-                                .setDepth(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-                                        result.format == ImageFormat.DEPTH_JPEG))
-                    }
+//                    // Display the photo taken to user
+//                    lifecycleScope.launch(Dispatchers.Main) {
+//                        navController.navigate(CameraFragmentDirections
+//                                .actionCameraToJpegViewer(output.absolutePath)
+//                                .setOrientation(result.orientation)
+//                                .setDepth(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+//                                        result.format == ImageFormat.DEPTH_JPEG))
+//                    }
                 }
 
                 // Re-enable click listener after photo is taken
