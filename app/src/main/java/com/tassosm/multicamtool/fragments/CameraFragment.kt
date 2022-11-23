@@ -17,32 +17,21 @@
 package com.tassosm.multicamtool.fragments
 
 import android.annotation.SuppressLint
+import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Color
 import android.graphics.ImageFormat
-import android.hardware.camera2.CameraCaptureSession
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraDevice
-import android.hardware.camera2.CameraManager
-import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.CaptureResult
-import android.hardware.camera2.DngCreator
-import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
-import android.media.ExifInterface
 import android.media.Image
 import android.media.ImageReader
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.HandlerThread
+import android.net.Uri
+import android.os.*
+import android.provider.MediaStore
 import android.util.Log
-import android.view.LayoutInflater
-import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.View
-import android.view.ViewGroup
+import android.view.*
 import androidx.core.graphics.drawable.toDrawable
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
@@ -59,13 +48,12 @@ import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.OutputStream
 import java.text.SimpleDateFormat
+import java.util.*
 import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.TimeoutException
-import java.util.Date
-import java.util.Locale
 import java.util.concurrent.Executor
-import kotlin.RuntimeException
+import java.util.concurrent.TimeoutException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
@@ -101,13 +89,19 @@ class CameraFragment : Fragment() {
         context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     }
 
-    /** [CameraCharacteristics] corresponding to the provided Camera ID */
-    private val characteristics: CameraCharacteristics by lazy {
-        cameraManager.getCameraCharacteristics(args.dualCam.logicalId)
+    /** [CameraCharacteristics] corresponding to the first provided physical camera ID */
+    private val characteristics1: CameraCharacteristics by lazy {
+        cameraManager.getCameraCharacteristics(args.dualCam.physicalId1)
+    }
+
+    /** [CameraCharacteristics] corresponding to the second provided physical camera ID */
+    private val characteristics2: CameraCharacteristics by lazy {
+        cameraManager.getCameraCharacteristics(args.dualCam.physicalId2)
     }
 
     /** Readers used as buffers for camera still shots */
-    private lateinit var imageReader: ImageReader
+    private lateinit var imageReader1: ImageReader
+    private lateinit var imageReader2: ImageReader
 
     /** [HandlerThread] where all camera operations run */
     private val cameraThread = HandlerThread("CameraThread").apply { start() }
@@ -164,6 +158,7 @@ class CameraFragment : Fragment() {
             insets.consumeSystemWindowInsets()
         }
 
+        // This just initializes the camera when the first viewFinder says its okay. Not sure how to improve this.
         fragmentCameraBinding.viewFinder1.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceDestroyed(holder: SurfaceHolder) = Unit
 
@@ -175,16 +170,29 @@ class CameraFragment : Fragment() {
 
             override fun surfaceCreated(holder: SurfaceHolder) {
                 // Selects appropriate preview size and configures view finder
-                val previewSize = getPreviewOutputSize(
+                val previewSize1 = getPreviewOutputSize(
                     fragmentCameraBinding.viewFinder1.display,
-                    characteristics,
+                    characteristics1,
                     SurfaceHolder::class.java
                 )
-                Log.d(TAG, "View finder size: ${fragmentCameraBinding.viewFinder1.width} x ${fragmentCameraBinding.viewFinder1.height}")
-                Log.d(TAG, "Selected preview size: $previewSize")
+                Log.d(TAG, "First view finder size: ${fragmentCameraBinding.viewFinder1.width} x ${fragmentCameraBinding.viewFinder1.height}")
+                Log.d(TAG, "Selected preview size: $previewSize1")
                 fragmentCameraBinding.viewFinder1.setAspectRatio(
-                    previewSize.width,
-                    previewSize.height
+                    previewSize1.width,
+                    previewSize1.height * 2
+                )
+
+                // Selects appropriate preview size and configures view finder
+                val previewSize2 = getPreviewOutputSize(
+                    fragmentCameraBinding.viewFinder2.display,
+                    characteristics2,
+                    SurfaceHolder::class.java
+                )
+                Log.d(TAG, "First view finder size: ${fragmentCameraBinding.viewFinder2.width} x ${fragmentCameraBinding.viewFinder2.height}")
+                Log.d(TAG, "Selected preview size: $previewSize2")
+                fragmentCameraBinding.viewFinder2.setAspectRatio(
+                    previewSize2.width,
+                    previewSize2.height * 2
                 )
 
                 // To ensure that size is set, initialize camera in the view's thread
@@ -193,7 +201,7 @@ class CameraFragment : Fragment() {
         })
 
         // Used to rotate the output media to match device orientation
-        relativeOrientation = OrientationLiveData(requireContext(), characteristics).apply {
+        relativeOrientation = OrientationLiveData(requireContext(), characteristics1).apply {
             observe(viewLifecycleOwner, Observer { orientation ->
                 Log.d(TAG, "Orientation changed: $orientation")
             })
@@ -211,17 +219,24 @@ class CameraFragment : Fragment() {
         // Open the selected camera
         camera = openDualCamera(cameraManager, args.dualCam, cameraHandler)
 
-        // Initialize an image reader which will be used to capture still photos
-        val size = characteristics.get(
+        // Initialize both image readers which will be used to capture still photos
+        val size1 = characteristics1.get(
                 CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
                 .getOutputSizes(args.pixelFormat).maxByOrNull { it.height * it.width }!!
-        imageReader = ImageReader.newInstance(
-                size.width, size.height, args.pixelFormat, IMAGE_BUFFER_SIZE)
+        imageReader1 = ImageReader.newInstance(
+            size1.width, size1.height, args.pixelFormat, IMAGE_BUFFER_SIZE)
+
+        val size2 = characteristics2.get(
+            CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+            .getOutputSizes(args.pixelFormat).maxByOrNull { it.height * it.width }!!
+        imageReader2 = ImageReader.newInstance(
+            size2.width, size2.height, args.pixelFormat, IMAGE_BUFFER_SIZE)
+
 
         // Creates list of Surfaces where the camera will output frames
         val targets: DualCameraTargets = Triple(mutableListOf(),
-            mutableListOf(fragmentCameraBinding.viewFinder1.holder.surface, imageReader.surface),
-            mutableListOf())
+            mutableListOf(fragmentCameraBinding.viewFinder1.holder.surface, imageReader1.surface),
+            mutableListOf(fragmentCameraBinding.viewFinder2.holder.surface, imageReader2.surface))
 
         // Start a capture session using our open camera and list of Surfaces where frames will go
         session = createDualCamCaptureSession(camera, args.dualCam, targets, cameraExecutor)
@@ -229,7 +244,8 @@ class CameraFragment : Fragment() {
         val captureRequest = camera.createCaptureRequest(
                 CameraDevice.TEMPLATE_PREVIEW).apply {
             addTarget(fragmentCameraBinding.viewFinder1.holder.surface)
-                }
+            addTarget(fragmentCameraBinding.viewFinder2.holder.surface)
+        }
 
         // This will keep sending the capture request as frequently as possible until the
         // session is torn down or session.stopRepeating() is called
@@ -243,12 +259,15 @@ class CameraFragment : Fragment() {
 
             // Perform I/O heavy operations in a different scope
             lifecycleScope.launch(Dispatchers.IO) {
-                takePhoto().use { result ->
+                val result1 = takePhoto(imageReader1, fragmentCameraBinding.viewFinder1)
+                val result2 = takePhoto(imageReader2, fragmentCameraBinding.viewFinder2)
+
+                arrayOf(result1, result2).forEach { result ->
                     Log.d(TAG, "Result received: $result")
 
                     // Save the result to disk
-                    val output = saveResult(result)
-                    Log.d(TAG, "Image saved: ${output.absolutePath}")
+                    val outputStream = saveResult(result)
+                    Log.d(TAG, "Image saved: ${outputStream}")
 
                     // If the result is a JPEG file, update EXIF metadata with orientation info
                     if (output.extension == "jpg") {
@@ -353,7 +372,7 @@ class CameraFragment : Fragment() {
      * template. It performs synchronization between the [CaptureResult] and the [Image] resulting
      * from the single capture, and outputs a [CombinedCaptureResult] object.
      */
-    private suspend fun takePhoto():
+    private suspend fun takePhoto(imageReader: ImageReader, viewFinder: View):
             CombinedCaptureResult = suspendCoroutine { cont ->
 
         // Flush any images left in the image reader
@@ -379,7 +398,8 @@ class CameraFragment : Fragment() {
                     timestamp: Long,
                     frameNumber: Long) {
                 super.onCaptureStarted(session, request, timestamp, frameNumber)
-                fragmentCameraBinding.viewFinder1.post(animationTask)
+                // animate the provided viewFinder
+                viewFinder.post(animationTask)
             }
 
             override fun onCaptureCompleted(
@@ -404,6 +424,7 @@ class CameraFragment : Fragment() {
 
                         // Dequeue images while timestamps don't match
                         val image = imageQueue.take()
+
                         // TODO(owahltinez): b/142011420
                         // if (image.timestamp != resultTimestamp) continue
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
@@ -422,7 +443,7 @@ class CameraFragment : Fragment() {
 
                         // Compute EXIF orientation metadata
                         val rotation = relativeOrientation.value ?: 0
-                        val mirrored = characteristics.get(CameraCharacteristics.LENS_FACING) ==
+                        val mirrored = characteristics1.get(CameraCharacteristics.LENS_FACING) ==
                                 CameraCharacteristics.LENS_FACING_FRONT
                         val exifOrientation = computeExifOrientation(rotation, mirrored)
 
