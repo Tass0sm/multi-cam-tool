@@ -20,6 +20,7 @@ import android.annotation.SuppressLint
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Camera
 import android.graphics.Color
 import android.graphics.ImageFormat
 import android.hardware.camera2.*
@@ -33,6 +34,7 @@ import android.provider.MediaStore
 import android.util.Log
 import android.view.*
 import androidx.core.graphics.drawable.toDrawable
+import androidx.exifinterface.media.ExifInterface
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
@@ -97,6 +99,13 @@ class CameraFragment : Fragment() {
     /** [CameraCharacteristics] corresponding to the second provided physical camera ID */
     private val characteristics2: CameraCharacteristics by lazy {
         cameraManager.getCameraCharacteristics(args.dualCam.physicalId2)
+    }
+
+    private val characteristicsMap: Map<String, CameraCharacteristics> by lazy {
+        HashMap<String, CameraCharacteristics>().apply {
+            this[args.dualCam.physicalId1] = characteristics1
+            this[args.dualCam.physicalId2] = characteristics2
+        }
     }
 
     /** Readers used as buffers for camera still shots */
@@ -259,15 +268,15 @@ class CameraFragment : Fragment() {
 
             // Perform I/O heavy operations in a different scope
             lifecycleScope.launch(Dispatchers.IO) {
-                val result1 = takePhoto(imageReader1, fragmentCameraBinding.viewFinder1)
-                val result2 = takePhoto(imageReader2, fragmentCameraBinding.viewFinder2)
+                val result1 = takePhoto(imageReader1, fragmentCameraBinding.viewFinder1, args.dualCam.physicalId1)
+                val result2 = takePhoto(imageReader2, fragmentCameraBinding.viewFinder2, args.dualCam.physicalId2)
 
                 arrayOf(result1, result2).forEach { result ->
                     Log.d(TAG, "Result received: $result")
 
                     // Save the result to disk
-                    val outputStream = saveResult(result)
-                    Log.d(TAG, "Image saved: ${outputStream}")
+                    val output = saveResult(result)
+                    Log.d(TAG, "Image saved: ${output}")
 
                     // If the result is a JPEG file, update EXIF metadata with orientation info
                     if (output.extension == "jpg") {
@@ -372,7 +381,7 @@ class CameraFragment : Fragment() {
      * template. It performs synchronization between the [CaptureResult] and the [Image] resulting
      * from the single capture, and outputs a [CombinedCaptureResult] object.
      */
-    private suspend fun takePhoto(imageReader: ImageReader, viewFinder: View):
+    private suspend fun takePhoto(imageReader: ImageReader, viewFinder: View, cameraId: String):
             CombinedCaptureResult = suspendCoroutine { cont ->
 
         // Flush any images left in the image reader
@@ -449,7 +458,7 @@ class CameraFragment : Fragment() {
 
                         // Build the result and resume progress
                         cont.resume(CombinedCaptureResult(
-                                image, result, exifOrientation, imageReader.imageFormat))
+                                image, result, exifOrientation, imageReader.imageFormat, cameraId))
 
                         // There is no need to break out of the loop, this coroutine will suspend
                     }
@@ -478,7 +487,9 @@ class CameraFragment : Fragment() {
 
             // When the format is RAW we use the DngCreator utility library
             ImageFormat.RAW_SENSOR -> {
-                val dngCreator = DngCreator(characteristics, result.metadata)
+                val characteristics = characteristicsMap[result.cameraId]
+
+                val dngCreator = DngCreator(characteristics!!, result.metadata)
                 try {
                     val output = createFile(requireContext(), "dng")
                     FileOutputStream(output).use { dngCreator.writeImage(it, result.image) }
@@ -532,7 +543,8 @@ class CameraFragment : Fragment() {
                 val image: Image,
                 val metadata: CaptureResult,
                 val orientation: Int,
-                val format: Int
+                val format: Int,
+                val cameraId: String
         ) : Closeable {
             override fun close() = image.close()
         }
