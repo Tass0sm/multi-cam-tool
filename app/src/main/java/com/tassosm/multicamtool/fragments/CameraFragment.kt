@@ -26,6 +26,7 @@ import android.graphics.ImageFormat
 import android.hardware.camera2.*
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.icu.util.Output
 import android.media.Image
 import android.media.ImageReader
 import android.net.Uri
@@ -275,17 +276,17 @@ class CameraFragment : Fragment() {
                     Log.d(TAG, "Result received: $result")
 
                     // Save the result to disk
-                    val output = saveResult(result)
-                    Log.d(TAG, "Image saved: ${output}")
+                    saveResult(result)
+//                    Log.d(TAG, "Image saved: ${output}")
 
                     // If the result is a JPEG file, update EXIF metadata with orientation info
-                    if (output.extension == "jpg") {
-                        val exif = ExifInterface(output.absolutePath)
-                        exif.setAttribute(
-                                ExifInterface.TAG_ORIENTATION, result.orientation.toString())
-                        exif.saveAttributes()
-                        Log.d(TAG, "EXIF metadata saved: ${output.absolutePath}")
-                    }
+//                    if (output.extension == "jpg") {
+//                        val exif = ExifInterface(output.absolutePath)
+//                        exif.setAttribute(
+//                                ExifInterface.TAG_ORIENTATION, result.orientation.toString())
+//                        exif.saveAttributes()
+//                        Log.d(TAG, "EXIF metadata saved: ${output.absolutePath}")
+//                    }
 
 //                    // Display the photo taken to user
 //                    lifecycleScope.launch(Dispatchers.Main) {
@@ -468,7 +469,7 @@ class CameraFragment : Fragment() {
     }
 
     /** Helper function used to save a [CombinedCaptureResult] into a [File] */
-    private suspend fun saveResult(result: CombinedCaptureResult): File = suspendCoroutine { cont ->
+    private suspend fun saveResult(result: CombinedCaptureResult): OutputStream = suspendCoroutine { cont ->
         when (result.format) {
 
             // When the format is JPEG or DEPTH JPEG we can simply save the bytes as-is
@@ -476,9 +477,9 @@ class CameraFragment : Fragment() {
                 val buffer = result.image.planes[0].buffer
                 val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
                 try {
-                    val output = createFile(requireContext(), "jpg")
-                    FileOutputStream(output).use { it.write(bytes) }
-                    cont.resume(output)
+                    val outputStream = createJPEGOutputStream(requireContext(), "jpg")
+                    outputStream.use { it.write(bytes) }
+                    cont.resume(outputStream)
                 } catch (exc: IOException) {
                     Log.e(TAG, "Unable to write JPEG image to file", exc)
                     cont.resumeWithException(exc)
@@ -488,12 +489,12 @@ class CameraFragment : Fragment() {
             // When the format is RAW we use the DngCreator utility library
             ImageFormat.RAW_SENSOR -> {
                 val characteristics = characteristicsMap[result.cameraId]
-
                 val dngCreator = DngCreator(characteristics!!, result.metadata)
                 try {
                     val output = createFile(requireContext(), "dng")
-                    FileOutputStream(output).use { dngCreator.writeImage(it, result.image) }
-                    cont.resume(output)
+                    val outputStream = FileOutputStream(output)
+                    outputStream.use { dngCreator.writeImage(it, result.image) }
+                    cont.resume(outputStream)
                 } catch (exc: IOException) {
                     Log.e(TAG, "Unable to write DNG image to file", exc)
                     cont.resumeWithException(exc)
@@ -554,9 +555,26 @@ class CameraFragment : Fragment() {
          *
          * @return [File] created.
          */
+        private fun createJPEGOutputStream(context: Context, extension: String): OutputStream {
+            val resolver: ContentResolver = context.contentResolver
+            val contentValues = ContentValues()
+            val sdf = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US)
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "IMG_${sdf.format(Date())}.$extension");
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpg");
+            contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+            val imageUri: Uri? =
+                resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            return resolver.openOutputStream(imageUri!!, "w")!!
+        }
+
+        /**
+         * Create a [File] named a using formatted timestamp with the current date and time.
+         *
+         * @return [File] created.
+         */
         private fun createFile(context: Context, extension: String): File {
             val sdf = SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US)
-            return File(context.filesDir, "IMG_${sdf.format(Date())}.$extension")
+            return File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "IMG_${sdf.format(Date())}.$extension")
         }
     }
 }
