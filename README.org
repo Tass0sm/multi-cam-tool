@@ -1,1 +1,10 @@
 Take photos in stereo.
+
+* Screenshot
+Running on a Pixel 6:
+[[file:screenshots/multi-cam-tool.png]]
+
+* Resources
+- https://developer.android.com/training/camera2/multi-camera
+- https://developer.android.com/training/camera2/capture-sessions-requests
+- https://medium.com/androiddevelopers/getting-the-most-from-the-new-multi-camera-api-5155fb3d77d9
